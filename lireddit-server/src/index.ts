@@ -13,6 +13,7 @@ import { createClient } from "redis"
 import session from "express-session";
 import connectRedis from 'connect-redis'
 import { MyContext } from "./types";
+import cors from 'cors'
 
 const main = async () => {
 
@@ -24,6 +25,11 @@ const main = async () => {
     const RedisStore = connectRedis(session)
     const redisClient = createClient({ legacyMode: true })
     redisClient.connect()
+
+    app.use(cors({
+        origin: ["https://studio.apollographql.com", "http://localhost:3000"],
+        credentials: true
+    }))
 
     app.use(
         session({
@@ -59,11 +65,8 @@ const main = async () => {
 
     apolloServer.applyMiddleware({
         app,
-        cors: {
-            origin: ["https://studio.apollographql.com"],
-            credentials: true
-        }
-    });
+        cors: false
+    })
 
     app.listen(4000, () => console.log('server started on localhost:4000'))
 }
