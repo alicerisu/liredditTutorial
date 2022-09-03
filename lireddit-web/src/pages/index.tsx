@@ -13,7 +13,7 @@ import { NavBar } from '../components/NavBar'
 const Index = () => (
   <>
     <NavBar />
-    <div>bote um mega</div>
+    <div>Homepage</div>
   </>
 )
 
