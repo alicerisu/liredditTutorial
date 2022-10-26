@@ -1,9 +1,10 @@
-
-import { Connection, EntityManager, IDatabaseDriver } from "@mikro-orm/core"
 import { Request, Response } from "express"
+import RedisClient from "ioredis"
+import { DataSource } from "typeorm"
 
 export type MyContext = {
-    em: EntityManager<IDatabaseDriver<Connection>>,
     req: Request,
-    res: Response
+    res: Response,
+    redis: RedisClient,
+    dataSource: DataSource
 } 

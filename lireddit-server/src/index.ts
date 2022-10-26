@@ -1,33 +1,38 @@
 import "reflect-metadata"
-import { MikroORM } from "@mikro-orm/core"
 import { COOKIE_NAME, __prod__ } from "./constants";
-//import { Post } from "./entities/Post";
-import mikroOrmConfig from "./mikro-orm.config";
 import express from 'express';
 import { ApolloServer } from "apollo-server-express";
 import { buildSchema } from "type-graphql";
 import { HelloResolver } from "./resolvers/hello";
 import { PostResolver } from "./resolvers/post";
 import { UserResolver } from "./resolvers/user";
-import { createClient } from "redis"
 import session from "express-session";
 import connectRedis from 'connect-redis'
 import { MyContext } from "./types";
 import cors from 'cors'
+import Redis from 'ioredis'
+import { DataSource } from "typeorm";
+import { User } from "./entities/User";
+import { Post } from "./entities/Post";
 
 const main = async () => {
-
-    const orm = await MikroORM.init(mikroOrmConfig);
-    await orm.getMigrator().up();
-    const fork = orm.em.fork();
+    const dataSource = await new DataSource({
+        type: 'postgres',
+        database: 'lireddit2',
+        username: 'postgres',
+        password: 'admin',
+        logging: true,
+        synchronize: true,
+        entities: [Post,User]
+    })
+    await dataSource.initialize()
     const app = express()
 
     const RedisStore = connectRedis(session)
-    const redisClient = createClient({ legacyMode: true })
-    redisClient.connect()
+    const redis = new Redis()
 
     app.use(cors({
-        origin: ["https://studio.apollographql.com", "http://localhost:3000"],
+        origin: ["https://studio.apollographql.com","http://localhost:4000/graphql", "http://localhost:3000"],
         credentials: true
     }))
 
@@ -36,15 +41,14 @@ const main = async () => {
             name: COOKIE_NAME,
             store: new RedisStore(
                 {
-                    client: redisClient,
+                    client: redis,
                     disableTouch: true,
-                    disableTTL: true,
                 })
             ,
             cookie: {
                 maxAge: 1000 * 60 * 24 * 365 * 10,
                 httpOnly: false,
-                sameSite: 'lax',
+                sameSite: 'none',
                 secure: __prod__
             },
             saveUninitialized: false,
@@ -58,7 +62,7 @@ const main = async () => {
             resolvers: [HelloResolver, PostResolver, UserResolver],
             validate: false
         }),
-        context: ({ req, res }): MyContext => ({ em: fork, req, res }),
+        context: ({ req, res }): MyContext => ({ req, res, redis, dataSource }),
     })
 
     await apolloServer.start()

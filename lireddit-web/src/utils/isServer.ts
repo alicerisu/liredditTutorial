@@ -1,0 +1,1 @@
+export const isaServer = () => typeof window === "undefined"
