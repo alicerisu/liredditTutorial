@@ -14,6 +14,8 @@ import Redis from 'ioredis'
 import { DataSource } from "typeorm";
 import { User } from "./entities/User";
 import { Post } from "./entities/Post";
+import path from "path"
+import { Updoots } from "./entities/Updoots";
 
 const main = async () => {
     const dataSource = await new DataSource({
@@ -23,16 +25,18 @@ const main = async () => {
         password: 'admin',
         logging: true,
         synchronize: true,
-        entities: [Post,User]
+        entities: [Post, User, Updoots],
+        migrations: [path.join(__dirname, "./migrations/*")]
     })
     await dataSource.initialize()
+    await dataSource.runMigrations()
     const app = express()
 
     const RedisStore = connectRedis(session)
     const redis = new Redis()
 
     app.use(cors({
-        origin: ["https://studio.apollographql.com","http://localhost:4000/graphql", "http://localhost:3000"],
+        origin: ["https://studio.apollographql.com", "http://localhost:4000/graphql", "http://localhost:3000"],
         credentials: true
     }))
 
