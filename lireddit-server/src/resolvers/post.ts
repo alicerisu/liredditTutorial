@@ -2,7 +2,7 @@ import { isAuth } from "../middleware/isAuth";
 import { MyContext } from "src/types";
 import { Arg, Ctx, Field, FieldResolver, Info, InputType, Int, Mutation, ObjectType, Query, Resolver, Root, UseMiddleware } from "type-graphql";
 import { Post } from "../entities/Post";
-import { Db } from "typeorm";
+import { Db, getConnection } from "typeorm";
 import { Updoots } from "../entities/Updoots";
 
 @InputType()
@@ -40,24 +40,45 @@ export class PostResolver {
 		const isUpdoot = value !== -1;
 		const { userId } = req.session;
 		const realValue = isUpdoot ? 1 : -1;
-		try {
+
+		const updoot = await Updoots.findOne({ where: { postId, userId } })
+
+		if (updoot && updoot.value !== realValue) {
 			await dataSource.transaction(async (tm) => {
-				await tm.query(
-					`insert into updoots ("userId", "postId", value)
-					values (${userId}, ${postId}, ${realValue});`
-				)
+				await tm.query(`
+					update updoots
+					set value = ${realValue}
+					where "postId" = ${postId} and "userId" = ${userId}
+				`)
 
 				await tm.query(
 					`update post p
-					set points = p.points + ${realValue}
+					set points = p.points + ${2 * realValue}
 					where p.id = ${postId};`
 				)
-			
 			})
-		} catch (error) {
-			console.log(error)
-			return false;
+
+		} else if (!updoot) {
+			try {
+				await dataSource.transaction(async (tm) => {
+					await tm.query(
+						`insert into updoots ("userId", "postId", value)
+						values (${userId}, ${postId}, ${realValue});`
+					)
+
+					await tm.query(
+						`update post p
+						set points = p.points + ${realValue}
+						where p.id = ${postId};`
+					)
+
+				})
+			} catch (error) {
+				console.log(error)
+				return false;
+			}
 		}
+
 		return true;
 	}
 
@@ -65,15 +86,21 @@ export class PostResolver {
 	async posts(
 		@Arg('limit', () => Int) limit: number,
 		@Arg('cursor', () => String, { nullable: true }) cursor: string,
-		@Ctx() { dataSource }: MyContext
+		@Ctx() { dataSource, req }: MyContext
 	): Promise<PaginatedPosts> {
 		const realLimit = Math.min(50, limit)
 		const realLimitPlusOne = realLimit + 1
 
 		const replacemets: any[] = [realLimitPlusOne]
 
+		if (req.session.userId) {
+			replacemets.push(req.session.userId);
+		}
+
+		let cursorIdx = 3
 		if (cursor) {
-			replacemets.push(new Date(parseInt(cursor)));
+			replacemets.push(new Date(parseInt(cursor)))
+			cursorIdx = replacemets.length;
 		}
 
 		const posts = await dataSource.query(`
@@ -85,9 +112,10 @@ export class PostResolver {
 				'createdAt', u."createdAt",
 				'updatedAt', u."updatedAt"
 				) creator
+			${req.session.userId ? ',(select value from updoots where "userId" = $2 and "postId" = p.id) "voteStatus"' : ''}
 			from public.post p
 			inner join public.user u on u.id = p."creatorId"
-			${cursor ? `where p."createdAt" < $2` : ''}
+			${cursor ? `where p."createdAt" < $${cursorIdx}` : ''}
 			order by p."createdAt" DESC
 			limit $1
 		`, replacemets)
@@ -97,9 +125,13 @@ export class PostResolver {
 	}
 
 	@Query(() => Post, { nullable: true })
-	post(@Arg('id') id: number): Promise<Post | null> {
-		return Post.findOne({ where: { id } });
-
+	post(@Arg('id', () => Int) id: number): Promise<Post | null> {
+		return Post.findOne({
+			where: {
+				id
+			},
+			relations: ["creator"]
+		});
 	}
 
 	@Mutation(() => Post)
@@ -115,27 +147,46 @@ export class PostResolver {
 	}
 
 	@Mutation(() => Post, { nullable: true })
+	@UseMiddleware(isAuth)
 	async updatePost(
-		@Arg('id') id: number,
-		@Arg('title', () => String, { nullable: true }) title: string
+		@Arg('id', () => Int) id: number,
+		@Arg('title', () => String, { nullable: true }) title: string,
+		@Arg('text', () => String, { nullable: true }) text: string,
+		@Ctx() { req, dataSource }: MyContext
 	): Promise<Post | null> {
-		const post = await Post.findOne({ where: { id } })
-		if (!post) {
-			return null
-		}
+		const post =
+			await dataSource
+				.createQueryBuilder()
+				.update(Post)
+				.set({
+					title,
+					text
+				})
+				.where('id = :id and "creatorId" = :creatorId', { id, creatorId: req.session.userId })
+				.returning("*")
+				.execute()
 
-		if (title !== undefined) {
-			post.title = title;
-			await Post.update({ id, }, { title })
-		}
-		return post;
+		return post.raw[0]
 	}
 
 	@Mutation(() => Boolean)
+	@UseMiddleware(isAuth)
 	async deletePost(
-		@Arg('id') id: number
+		@Arg('id', () => Int) id: number,
+		@Ctx() { req }: MyContext
 	): Promise<boolean> {
+		const post = await Post.findOne({ where: { id } })
+
+		if (!post) {
+			return false
+		}
+
+		if (post.creatorId !== req.session.userId) {
+			throw new Error('not authorized')
+		}
+
+		await Updoots.delete({ postId: id })
 		await Post.delete({ id })
-		return true;
+		return true
 	}
 }

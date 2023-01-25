@@ -20,7 +20,9 @@ export class Updoots extends BaseEntity {
 	user: User;
 
 	@Field(() => Post)
-	@ManyToOne(() => Post, post => post.updoots)
+	@ManyToOne(() => Post, post => post.updoots, {
+		onDelete: 'CASCADE'
+	})
 	post: Post;
 
 	@Field()
