@@ -4,6 +4,7 @@ import { Arg, Ctx, Field, FieldResolver, Info, InputType, Int, Mutation, ObjectT
 import { Post } from "../entities/Post";
 import { Db, getConnection } from "typeorm";
 import { Updoots } from "../entities/Updoots";
+import { User } from "../entities/User";
 
 @InputType()
 class PostInput {
@@ -28,6 +29,28 @@ export class PostResolver {
 		@Root() root: Post
 	) {
 		return root.text.slice(0, 50) + "..."
+	}
+
+	@FieldResolver(() => User)
+	creator(
+		@Root() post: Post,
+		@Ctx() { userLoader }: MyContext
+	) {
+		return userLoader.load(post.creatorId)
+	}
+
+	@FieldResolver(() => User)
+	async voteStatus(
+		@Root() post: Post,
+		@Ctx() { updootLoader, req }: MyContext
+	) {
+		if (!req.session.userId) {
+			return null
+		}
+
+		const updoot = await updootLoader.load({ postId: post.id, userId: req.session.userId })
+
+		return updoot ? updoot.value : null;
 	}
 
 	@Mutation(() => Boolean)
@@ -86,36 +109,21 @@ export class PostResolver {
 	async posts(
 		@Arg('limit', () => Int) limit: number,
 		@Arg('cursor', () => String, { nullable: true }) cursor: string,
-		@Ctx() { dataSource, req }: MyContext
+		@Ctx() { dataSource }: MyContext
 	): Promise<PaginatedPosts> {
 		const realLimit = Math.min(50, limit)
 		const realLimitPlusOne = realLimit + 1
 
 		const replacemets: any[] = [realLimitPlusOne]
 
-		if (req.session.userId) {
-			replacemets.push(req.session.userId);
-		}
-
-		let cursorIdx = 3
 		if (cursor) {
 			replacemets.push(new Date(parseInt(cursor)))
-			cursorIdx = replacemets.length;
 		}
 
 		const posts = await dataSource.query(`
-			select p.*,
-			json_build_object(
-				'id', u.id,
-				'username', u.username,
-				'email', u.email,
-				'createdAt', u."createdAt",
-				'updatedAt', u."updatedAt"
-				) creator
-			${req.session.userId ? ',(select value from updoots where "userId" = $2 and "postId" = p.id) "voteStatus"' : ''}
+			select p.*
 			from public.post p
-			inner join public.user u on u.id = p."creatorId"
-			${cursor ? `where p."createdAt" < $${cursorIdx}` : ''}
+			${cursor ? `where p."createdAt" < $2` : ''}
 			order by p."createdAt" DESC
 			limit $1
 		`, replacemets)
@@ -129,8 +137,7 @@ export class PostResolver {
 		return Post.findOne({
 			where: {
 				id
-			},
-			relations: ["creator"]
+			}
 		});
 	}
 
